@@ -17,16 +17,17 @@ user = "root"
 host = "192.168.0.1"
 chave = ""  # caminho da chave nome_arquivo.pem
 
-# copiar as variaveis de cima e jogar no local_settings para substituir
-try:
-    from local_settings import *
-except ImportError:
-    print("sem local_settings")
-
 # LOCAL
 bitbucket_user = "conta"
 bitbucket_project_default = "projeto_padrao"
 folder_project_local = "~/projetos/"
+
+# copiar as variaveis de cima e jogar no local_settings para substituir
+try:
+    from local_settings import *
+except ImportError:
+    print("###############")
+    print("sem local_settings")
 
 # diretório do conf.d do supervisor
 env.supervisor_conf_d_path = "/etc/supervisor/conf.d"
@@ -75,11 +76,12 @@ def newserver():
 
     # gera uma chave no servidor para utilizar o comando upload_public_key
     # run('ssh-keygen')
+    upload_public_key()
 
     update_server()
     upgrade_server()
 
-    # # pacotes
+    # # # pacotes
     build_server()
     python_server()
     mysql_server()
@@ -95,9 +97,9 @@ def newserver():
     nginx_restart()
 
     # proftpd
-    print(yellow("proftpd - Alterando arquivo /etc/proftpd/proftpd.conf"))
-    write_file("proftpd.conf", "/etc/proftpd/proftpd.conf")
-    proftpd_restart()
+    # print(yellow("proftpd - Alterando arquivo /etc/proftpd/proftpd.conf"))
+    # write_file("proftpd.conf", "/etc/proftpd/proftpd.conf")
+    # proftpd_restart()
 
     # supervisor
     print(yellow("supervisor - Alterando arquivo /etc/supervisor/supervisord.conf"))
@@ -106,20 +108,22 @@ def newserver():
 
     log("Anote a senha do banco de dados: {0}".format(env.db_password), green)
 
-    log("Reiniciando a máquina", yellow)
+    # log("Reiniciando a máquina", yellow)
     reboot()
 
 
 # cria uma conta no servidor
 def newaccount():
     """Criar uma nova conta do usuário no servidor"""
-    log("Criar uma nova conta do usuário no servidor", yellow)
+    # log("Criar uma nova conta do usuário no servidor", yellow)
 
     # criando usuario
     if not env.conta:
         env.conta = input("Digite o nome da conta: ")
+
+    # necessario para o arquivo nginx.conf
     if not env.dominio:
-        env.dominio = input("Digite o domínio do site (sem www): ")
+        env.dominio = input("Digite o domínio do site sem o www e: ")
     if not env.linguagem:
         env.linguagem = input(
             "Linguagens disponíveis\n\n1) PYTHON\n2) PHP\n\nEscolha a linguagem: "
@@ -133,28 +137,31 @@ def newaccount():
             env.porta = input(
                 "Digite o número de uma porta que não está listada acima: "
             )
-            if confirm("Este projeto está em django 1.7?"):
-                env.django17 = True
-                env.pasta_settings = input(
-                    "Digite o nome da pasta onde está o settings. ( Ex: app, config, [nome-do-projeto] ):"
-                )
-                log(
-                    "ATENÇÃO!! PARA DJANGO 1.7 A VERSÃO DO GUNICORN NO ENV DEVE SER 19++",
-                    green,
-                )
-    if not env.mysql_password:
-        env.mysql_password = input("Digite a senha do ROOT do MySQL: ")
+            
+            env.django17 = True
+            env.pasta_settings = input(
+                "Digite o nome da pasta onde está o settings. ( Ex: app, config, [nome-do-projeto] ):"
+            )
+            log(
+                "ATENÇÃO!! PARA DJANGO 1.7 A VERSÃO DO GUNICORN NO ENV DEVE SER 19++",
+                green,
+            )
+    # if not env.mysql_password:
+        # env.mysql_password = input("Digite a senha do ROOT do MySQL : ")
 
     # cria usuario no linux
-    user_senha = create_password(12)
+    user_senha = create_password(32)
     adduser(env.conta, user_senha)
+
+    log( 'SENHA USER', yellow )
+    log( user_senha, yellow )
 
     sudo("mkdir /home/{0}/logs".format(env.conta))
     sudo("touch /home/{0}/logs/access.log".format(env.conta))
     sudo("touch /home/{0}/logs/error.log".format(env.conta))
 
     if int(env.linguagem) == 1:
-        sudo("virtualenv /home/{0}/env --no-site-packages".format(env.conta))
+        sudo("virtualenv /home/{0}/env".format(env.conta))
         write_file("nginx.conf", "/home/{0}/nginx.conf".format(env.conta))
         if env.django17:
             write_file(
@@ -182,11 +189,19 @@ def newaccount():
         sudo("mkdir /home/{0}/public_html/".format(env.conta))
 
     # cria banco e usuario no banco
-    banco_senha = create_password(12)
-    newbase(env.conta, banco_senha)
+    
+    banco_senha = create_password(24)
+    if confirm('Deseja criar uma database no banco de dados?'):
+        banco_senha = create_password(24)
+        # banco_senha = '6ciMQ#10%3p1'
+        newbase(env.conta, banco_senha)
 
     # da permissao para o usuario no diretorio
     sudo("chown -R {0}:{0} /home/{0}".format(env.conta))
+
+    # coloca o user do nginx no grupo do usuario do projeto
+    # necessário para leitura de arquivos estáticos
+    sudo("gpasswd -a www-data {0}".format(env.conta))
 
     nginx_restart()
     supervisor_restart()
@@ -266,15 +281,25 @@ def adduser(conta=None, user_senha=None):
 def newbase(conta=None, banco_senha=None):
     """Criar banco de dados e usuário no servidor"""
 
+    # if not env.mysql_password:
+    #     env.mysql_password = input("Digite a senha do root mysql: ")
+
     if not banco_senha:
-        banco_senha = create_password(12)
+        if confirm('Deseja informar uma senha para o banco de dados?'):
+            banco_senha = input("Digite a senha desejada: ")
+        else:
+            banco_senha = create_password(14)
+
     print("Senha gerada para o banco: {0}".format(banco_senha))
+    
+    if confirm("Já copiou e salvou a senha?"):
+        print('--')
 
     if not conta:
         conta = input("Digite o nome do banco: ")
     log("NEW DATABASE {0}".format(conta), green)
 
-    # cria acesso para o banco local
+    # cria acesso para o banco 
     sudo(
         "echo CREATE DATABASE {0} | mysql -u root -p{1}".format(
             conta, env.mysql_password
@@ -286,22 +311,47 @@ def newbase(conta=None, banco_senha=None):
         )
     )
     sudo(
-        "echo \"GRANT ALL PRIVILEGES ON {0} . * TO '{0}'@'localhost'\" | mysql -u root -p{1}".format(
+        "echo \"GRANT ALL PRIVILEGES ON {0}.* TO '{0}'@'localhost'\" | mysql -u root -p{1}".format(
             conta, env.mysql_password
+        )
+    )
+    sudo(
+        "echo \"FLUSH PRIVILEGES\" | mysql -u root -p{0}".format(
+            env.mysql_password
         )
     )
 
-    # cria acesso para o banco remoto
-    sudo(
-        "echo \"CREATE USER '{0}'@'%' IDENTIFIED BY '{1}'\" | mysql -u root -p{2}".format(
-            conta, banco_senha, env.mysql_password
+    # # cria acesso para o banco remoto
+    if confirm('Deseja criar acesso externo ao banco? (nao recomendado)'):
+        sudo(
+            "echo \"CREATE USER '{0}'@'%' IDENTIFIED BY '{1}'\" | mysql -u root -p{2}".format(
+                conta, banco_senha, env.mysql_password
+            )
         )
-    )
-    sudo(
-        "echo \"GRANT ALL PRIVILEGES ON {0} . * TO '{0}'@'%'\" | mysql -u root -p{1}".format(
-            conta, env.mysql_password
+        sudo(
+            "echo \"GRANT ALL PRIVILEGES ON {0}.* TO '{0}'@'%'\" | mysql -u root -p{1}".format(
+                conta, env.mysql_password
+            )
         )
-    )
+
+        sudo(
+            "echo \"FLUSH PRIVILEGES\" | mysql -u root -p{0}".format(
+                env.mysql_password
+            )
+        )
+
+    """
+    UPDATE mysql.user SET authentication_string=PASSWORD('KAwPLKZdtlX7') WHERE User='superfin' and host='localhost';
+
+    ALTER USER 'superfin'@'localhost' IDENTIFIED BY 'KAwPLKZdtlX7';
+
+    ALTER USER 'superfin'@'localhost' IDENTIFIED BY 'Nap0E$w(E50V';
+
+    GRANT ALL ON superfin.superfin TO 'superfin'@'localhost';
+
+
+    Nap0E$w(E50V
+    """
 
 
 # MYSQL - deleta o usuario e o banco de dados
@@ -346,17 +396,20 @@ def update_server():
 def upgrade_server():
     """Atualizar programas no servidor"""
     log("Atualizando programas", yellow)
-    sudo("apt -y upgrade")
+    sudo("apt -y update")
 
 
 def build_server():
     """Instalar build-essential e outros pacotes importantes no servidor"""
     log("Instalando build-essential e outros pacotes", yellow)
+    sudo('apt -y update')
     sudo("apt -y install build-essential automake")
     sudo("apt -y install libxml2-dev libxslt-dev")
     sudo(
         "apt -y install libjpeg-dev libjpeg8-dev zlib1g-dev libfreetype6 libfreetype6-dev"
     )
+
+    sudo("apt-get -y install pwgen")
 
     # Then, on 32-bit Ubuntu, you should run:
 
@@ -367,22 +420,25 @@ def build_server():
     # Otherwise, on 64-bit Ubuntu, you should run:
 
     try:
-        sudo("ln -s /usr/lib/x86_64-linux-gnu/libfreetype.so /usr/lib/")
-        sudo("ln -s /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/")
-        sudo("ln -s /usr/lib/x86_64-linux-gnu/libjpeg.so /usr/lib/")
-    except:
+        # sudo("ln -s /usr/lib/x86_64-linux-gnu/libfreetype.so /usr/lib/")
+        # sudo("ln -s /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/")
+        # sudo("ln -s /usr/lib/x86_64-linux-gnu/libjpeg.so /usr/lib/")
         pass
+    except Exception as e:
+        log("######## - impossivel configurar links simbolicos %s" % e)
 
 
 def python_server():
     """Instalar todos pacotes necessários do python no servidor"""
     log("Instalando todos pacotes necessários", yellow)
-    sudo("sudo apt -y install libjpeg-dev libfreetype6 libfreetype6-dev zlib1g-dev")
-    sudo("apt -y install python-pil libjpeg62 libjpeg62-dev")
+    # apt-get install python3-dev default-libmysqlclient-dev pkg-config
+
+    sudo( "apt -y install python3-venv python3-dev libpq-dev python3-pil libjpeg62 libjpeg62-dev default-libmysqlclient-dev pkg-config")
+    # sudo("apt -y install python3-pil libjpeg62 libjpeg62-dev")
     sudo(
-        "apt -y install python python-dev python-setuptools python-mysqldb python-pip python-virtualenv"
+        "apt -y install python3-pip python3-virtualenv libssl-dev libffi-dev python3-full"
     )
-    # sudo('easy_install -U distribute')
+    sudo( "ln -s /usr/bin/python3 /usr/bin/python" )
 
 
 def mysql_server():
@@ -390,30 +446,45 @@ def mysql_server():
     log("Instalando MySQL", yellow)
 
     if confirm("Deseja que o script gere senha automatica para o mysql?"):
-        db_password = create_password(12)
+        db_password = create_password(24)
     else:
         db_password = input("Digite a senha root do mysql: ")
 
     env.db_password = db_password
 
-    sudo(
-        "echo mysql-server-5.0 mysql-server/root_password password {0} | debconf-set-selections".format(
-            db_password
-        )
-    )
-    sudo(
-        "echo mysql-server-5.0 mysql-server/root_password_again password {0} | debconf-set-selections".format(
-            db_password
-        )
-    )
+    # sudo(
+    #     "echo mysql-server-5.0 mysql-server/root_password password {0} | debconf-set-selections".format(
+    #         db_password
+    #     )
+    # )
+    # sudo(
+    #     "echo mysql-server-5.0 mysql-server/root_password_again password {0} | debconf-set-selections".format(
+    #         db_password
+    #     )
+    # )
     sudo("apt -q -y install mysql-server")
-    sudo(
-        "apt -y install libmysqlclient-dev"
-    )  # nao perguntar senha do mysql pedir senha antes
+    sudo( "apt-get -y install default-libmysqlclient-dev pkg-config" )
+
+    print("senha root mysql: {0}".format(db_password))
+
+    # inputs nao aceitam mais campos vazios
+    # resp = input("Apos copiar a senha e salvar em seu computador clique ENTER para continuar! defina 1 no proximo passo: ")
+
+    if confirm( "Voce ja copiou a senha do root mysql ? se sim continue, leia com atencao os passos seguintes, recomendamos seguranca de login 1" ):
+        print("----")
+
+    # preste atenção nas perguntas que o sistem ira lhe fazer na sequencia, recomendamos as respostas 1 LOW, insira a password sugerida
+    # depois entre com todas as respostas y
+
+    sudo("mysql_secure_installation")
+    sudo("apt -y install libmysqlclient-dev" )  # nao perguntar senha do mysql pedir senha antes
 
     log("BANCO DE DADOS - PASSWORD", green)
     print("senha root mysql: {0}".format(db_password))
-    resp = input("Após copiar a senha, clique ENTER para continuar!!!")
+
+    if confirm( "Podemos continuar?" ):
+        print("Ok :)")
+    # resp = input("Após copiar a senha, clique ENTER para continuar!!!")
 
 
 def git_server():
@@ -425,33 +496,26 @@ def git_server():
 def others_server():
     """Instalar nginx e supervisor"""
     log("Instalando nginx e supervisor", yellow)
-    sudo("apt -y install nginx supervisor")
-    sudo("apt -y install mercurial")
-    try:
-        sudo("apt -y install ruby rubygems")
-    except:
-        log("PACOTE DO RUBY GEMS FOI REMOVIDO DO PACKAGES DO UBUNTU", red)
 
-    # ubuntu 12
-    # sudo('apt -y install php5-fpm php5-suhosin php-apc php5-gd php5-imagick php5-curl')
-
-    # ubuntu 14
-    # sudo('apt -y install php5-fpm php-apc php5-mysql php5-gd php5-imagick php5-curl php5-cli')
-
-    # ubuntu 17
-    # sudo('apt -y install php7.0-fpm php7.0-apc php7.0-mysql php7.0-gd php7.0-imagick php7.0-curl php7.0-cli')
-    # sudo('apt -y install proftpd') # standalone nao perguntar
-
-    # ubuntu 18
     sudo("add-apt-repository universe")
-    sudo(
-        "apt -y install php7.2-fpm php7.2-apc php7.2-mysql php7.2-gd php7.2-imagick php7.2-curl php7.2-cli"
-    )
-    sudo("apt -y install proftpd")  # standalone nao perguntar
 
-    # ubuntu 14
-    sudo("apt install ruby-dev")
+    sudo("apt -y install nginx supervisor mercurial ruby rubygems ruby-dev")
+    # sudo("apt install ruby-dev")
     sudo("gem install compass")
+
+    sudo("apt -y install net-tools")
+    
+
+    if confirm( "Deseja instalar php na máquina?" ):
+        sudo( 'apt install software-properties-common' )
+        sudo( 'add-apt-repository ppa:ondrej/php' )
+        sudo( 'apt update' )
+        sudo(
+            "apt -y install php7.4-fpm php7.4-mysql php7.4-gd php7.4-imagick php7.4-curl php7.4-cli"
+        )
+
+    # if confirm( "Deseja instalar sistema de FTP?" ):
+    #     sudo("apt -y install proftpd")  # standalone nao perguntar
 
 
 def login():
@@ -471,6 +535,8 @@ def upload_public_key():
     run(
         "echo `cat ~/.ssh/uploaded_key.pub` >> ~/.ssh/authorized_keys && rm -f ~/.ssh/uploaded_key.pub"
     )
+    run('chmod 700 ~/.ssh')
+    run('chmod 600 ~/.ssh/authorized_keys')
 
 
 # RESTART
@@ -690,15 +756,20 @@ def git_local():
 # --------------------------------------------------------
 
 # gera senha
-def create_password(tamanho=12):
+def create_password(tamanho=18):
     """Gera uma senha - parametro tamanho"""
-    from random import choice
+    # from random import choice
 
-    caracters = "0123456789abcdefghijlmnopqrstuwvxzkABCDEFGHIJLMNOPQRSTUWVXZK_#"
-    senha = ""
-    for char in range(tamanho):
-        senha += choice(caracters)
-    return senha
+    # caracters = "0123456789abcdefghijlmnopqrstuwvxzkABCDEFGHIJLMNOPQRSTUWVXZK_#!@$%&()"
+    # senha = ""
+    # for char in range(tamanho):
+    #     senha += choice(caracters)
+
+    senha = str(run("pwgen -nc %s -1" % tamanho))
+
+    # print( senha.strip() )
+
+    return senha.strip()
 
 
 def log(message, color=white):
